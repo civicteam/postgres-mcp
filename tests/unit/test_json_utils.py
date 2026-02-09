@@ -5,6 +5,7 @@ import json
 import uuid
 from decimal import Decimal
 
+import mcp.types as types
 import pytest
 
 from postgres_mcp.json_utils import to_json
@@ -131,6 +132,7 @@ class TestFormatTextResponse:
         """Test that string input is passed through as-is."""
         result = format_text_response("hello world")
         assert len(result) == 1
+        assert isinstance(result[0], types.TextContent)
         assert result[0].text == "hello world"
 
     def test_structured_data_produces_json(self):
@@ -138,6 +140,7 @@ class TestFormatTextResponse:
         data = [{"schema_name": "public", "schema_owner": "postgres"}]
         result = format_text_response(data)
         assert len(result) == 1
+        assert isinstance(result[0], types.TextContent)
         parsed = json.loads(result[0].text)
         assert parsed[0]["schema_name"] == "public"
 
@@ -145,12 +148,14 @@ class TestFormatTextResponse:
         """Test that a dict is serialized to valid JSON."""
         data = {"name": "users", "type": "table"}
         result = format_text_response(data)
+        assert isinstance(result[0], types.TextContent)
         parsed = json.loads(result[0].text)
         assert parsed["name"] == "users"
 
     def test_empty_string(self):
         """Test that empty string is passed through as-is."""
         result = format_text_response("")
+        assert isinstance(result[0], types.TextContent)
         assert result[0].text == ""
 
     def test_simulated_sql_rows_with_mixed_types(self):
@@ -174,6 +179,7 @@ class TestFormatTextResponse:
             },
         ]
         result = format_text_response(rows)
+        assert isinstance(result[0], types.TextContent)
         parsed = json.loads(result[0].text)
         assert len(parsed) == 2
         assert parsed[0]["calls"] == 1500
