@@ -5,6 +5,7 @@ from typing import LiteralString
 from typing import Union
 from typing import cast
 
+from ..json_utils import to_json
 from ..sql import SafeSqlDriver
 from ..sql import SqlDriver
 from ..sql.extension_utils import check_extension
@@ -147,7 +148,7 @@ class TopQueriesCalc:
                 criteria = "mean execution time per call"
 
             result = f"Top {len(slow_queries)} slowest queries by {criteria}:\n"
-            result += str(slow_queries)
+            result += to_json(slow_queries)
             return result
         except Exception as e:
             logger.error(f"Error getting slow queries: {e}", exc_info=True)
@@ -243,7 +244,7 @@ class TopQueriesCalc:
             resource_queries = [row.cells for row in slow_query_rows] if slow_query_rows else []
             logger.info(f"Found {len(resource_queries)} resource-intensive queries")
 
-            return str(resource_queries)
+            return to_json(resource_queries)
         except Exception as e:
             logger.error(f"Error getting resource-intensive queries: {e}", exc_info=True)
             return f"Error resource-intensive queries: {e}"
