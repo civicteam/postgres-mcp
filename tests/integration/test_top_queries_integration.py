@@ -1,3 +1,4 @@
+import json
 import logging
 
 import pytest
@@ -131,6 +132,18 @@ async def test_get_top_queries_integration(local_sql_driver):
         assert "slowest queries by total execution time" in total_result
         assert "slowest queries by mean execution time" in mean_result
 
+        # Verify the JSON portion is valid and has expected structure
+        for result in [total_result, mean_result]:
+            json_start = result.index("\n") + 1
+            parsed = json.loads(result[json_start:])
+            assert isinstance(parsed, list)
+            assert len(parsed) > 0
+            first_row = parsed[0]
+            assert "query" in first_row
+            assert "calls" in first_row
+            assert "rows" in first_row
+            assert isinstance(first_row["calls"], int)
+
         # Log results for manual inspection
         logger.info(f"Top queries by total time: {total_result}")
         logger.info(f"Top queries by mean time: {mean_result}")
@@ -143,6 +156,35 @@ async def test_get_top_queries_integration(local_sql_driver):
 
         assert has_cross_join or has_value_gt_500 or has_count, "None of our test queries appeared in the results"
 
+    finally:
+        await cleanup_test_data(local_sql_driver)
+
+
+@pytest.mark.asyncio
+async def test_get_resource_queries_returns_valid_json(local_sql_driver):
+    """Integration test: get_top_resource_queries returns valid JSON with expected structure."""
+    try:
+        await setup_test_data(local_sql_driver)
+
+        calc = TopQueriesCalc(sql_driver=local_sql_driver)
+        result = await calc.get_top_resource_queries(frac_threshold=0.01)
+
+        # Result should be valid JSON
+        parsed = json.loads(result)
+        assert isinstance(parsed, list)
+
+        if len(parsed) > 0:
+            first_row = parsed[0]
+            assert "query" in first_row
+            assert "calls" in first_row
+            assert "total_exec_time" in first_row
+            assert "mean_exec_time" in first_row
+            assert isinstance(first_row["calls"], int)
+            # Numeric stats should be numbers, not strings
+            assert isinstance(first_row["total_exec_time"], (int, float))
+            assert isinstance(first_row["mean_exec_time"], (int, float))
+
+        logger.info(f"Resource queries result: {result}")
     finally:
         await cleanup_test_data(local_sql_driver)
 

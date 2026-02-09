@@ -27,6 +27,7 @@ from .explain import ExplainPlanTool
 from .index.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
 from .index.llm_opt import LLMOptimizerTool
 from .index.presentation import TextPresentation
+from .json_utils import to_json
 from .sql import DbConnPool
 from .sql import SafeSqlDriver
 from .sql import SqlDriver
@@ -72,8 +73,14 @@ async def get_sql_driver() -> Union[SqlDriver, SafeSqlDriver]:
 
 
 def format_text_response(text: Any) -> ResponseType:
-    """Format a text response."""
-    return [types.TextContent(type="text", text=str(text))]
+    """Format a text response.
+
+    Strings are passed through as-is. Structured data (lists, dicts, etc.)
+    is serialized to JSON for reliable programmatic consumption.
+    """
+    if isinstance(text, str):
+        return [types.TextContent(type="text", text=text)]
+    return [types.TextContent(type="text", text=to_json(text))]
 
 
 def format_error_response(error: str) -> ResponseType:
