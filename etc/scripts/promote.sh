@@ -78,9 +78,9 @@ if [[ -z "$PROD_CREDS" ]]; then
 fi
 
 # Extract the credentials
-AWS_ACCESS_KEY_ID=$(echo "$PROD_CREDS" | cut -d' ' -f1)
-AWS_SECRET_ACCESS_KEY=$(echo "$PROD_CREDS" | cut -d' ' -f2)
-AWS_SESSION_TOKEN=$(echo "$PROD_CREDS" | cut -d' ' -f3)
+AWS_ACCESS_KEY_ID=$(echo $PROD_CREDS | cut -d' ' -f1)
+AWS_SECRET_ACCESS_KEY=$(echo $PROD_CREDS | cut -d' ' -f2)
+AWS_SESSION_TOKEN=$(echo $PROD_CREDS | cut -d' ' -f3)
 
 # Get prod ECR password with assumed role
 echo "🔑 Getting prod ECR credentials with assumed role..."
