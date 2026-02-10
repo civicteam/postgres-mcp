@@ -8,7 +8,9 @@ import sys
 from enum import Enum
 from typing import Any
 from typing import Literal
+from typing import TypedDict
 from typing import Union
+from typing import cast
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
@@ -32,6 +34,53 @@ from .sql import SqlDriver
 from .sql import check_hypopg_installation_status
 from .sql import obfuscate_password
 from .top_queries import TopQueriesCalc
+
+# --- TypedDict output schemas ---
+# These provide rich outputSchema in MCP tool listings.
+# (FastMCP auto-generates JSON schemas from TypedDict return types.)
+# Only primitive types and dict[str, Any] are used to stay within
+# MCP's JSON Schema subset (no $defs/$ref/anyOf).
+
+
+class ListSchemasResult(TypedDict):
+    schemas: list[dict[str, Any]]
+
+
+class ListObjectsResult(TypedDict):
+    objects: list[dict[str, Any]]
+
+
+class ObjectDetailsResult(TypedDict, total=False):
+    basic: dict[str, Any]
+    columns: list[dict[str, Any]]
+    constraints: list[dict[str, Any]]
+    indexes: list[dict[str, Any]]
+    schema: str
+    name: str
+    data_type: str
+    start_value: str
+    increment: str
+    version: str
+    relocatable: bool
+
+
+class ExecuteSqlResult(TypedDict):
+    rows: list[dict[str, Any]]
+    row_count: int
+
+
+class IndexAnalysisResult(TypedDict, total=False):
+    error: str
+    summary: dict[str, Any]
+    recommendations: Any
+    query_impact: list[dict[str, Any]]
+
+
+class TopQueriesResult(TypedDict):
+    queries: list[dict[str, Any]]
+    sort_by: str
+    count: int
+
 
 # Initialize FastMCP with default settings
 mcp = FastMCP("postgres-mcp")
@@ -76,7 +125,7 @@ async def get_sql_driver() -> Union[SqlDriver, SafeSqlDriver]:
         readOnlyHint=True,
     ),
 )
-async def list_schemas() -> dict[str, Any]:
+async def list_schemas() -> ListSchemasResult:
     """List all schemas in the database."""
     sql_driver = await get_sql_driver()
     rows = await sql_driver.execute_query(
@@ -107,7 +156,7 @@ async def list_schemas() -> dict[str, Any]:
 async def list_objects(
     schema_name: str = Field(description="Schema name"),
     object_type: str = Field(description="Object type: 'table', 'view', 'sequence', or 'extension'", default="table"),
-) -> dict[str, Any]:
+) -> ListObjectsResult:
     """List objects of a given type in a schema."""
     sql_driver = await get_sql_driver()
 
@@ -178,7 +227,7 @@ async def get_object_details(
     schema_name: str = Field(description="Schema name"),
     object_name: str = Field(description="Object name"),
     object_type: str = Field(description="Object type: 'table', 'view', 'sequence', or 'extension'", default="table"),
-) -> dict[str, Any]:
+) -> ObjectDetailsResult:
     """Get detailed information about a database object."""
     sql_driver = await get_sql_driver()
 
@@ -376,7 +425,7 @@ If there is no hypothetical index, you can pass an empty list.""",
 # Query function declaration without the decorator - we'll add it dynamically based on access mode
 async def execute_sql(
     sql: str = Field(description="SQL to run", default="all"),
-) -> dict[str, Any]:
+) -> ExecuteSqlResult:
     """Executes a SQL query against the database."""
     sql_driver = await get_sql_driver()
     rows = await sql_driver.execute_query(sql)  # type: ignore
@@ -397,7 +446,7 @@ async def execute_sql(
 async def analyze_workload_indexes(
     max_index_size_mb: int = Field(description="Max index size in MB", default=10000),
     method: Literal["dta", "llm"] = Field(description="Method to use for analysis", default="dta"),
-) -> dict[str, Any]:
+) -> IndexAnalysisResult:
     """Analyze frequently executed queries in the database and recommend optimal indexes."""
     sql_driver = await get_sql_driver()
     if method == "dta":
@@ -405,7 +454,7 @@ async def analyze_workload_indexes(
     else:
         index_tuning = LLMOptimizerTool(sql_driver)
     dta_tool = TextPresentation(sql_driver, index_tuning)
-    return await dta_tool.analyze_workload(max_index_size_mb=max_index_size_mb)
+    return cast(IndexAnalysisResult, await dta_tool.analyze_workload(max_index_size_mb=max_index_size_mb))
 
 
 @mcp.tool(
@@ -420,7 +469,7 @@ async def analyze_query_indexes(
     queries: list[str] = Field(description="List of Query strings to analyze"),
     max_index_size_mb: int = Field(description="Max index size in MB", default=10000),
     method: Literal["dta", "llm"] = Field(description="Method to use for analysis", default="dta"),
-) -> dict[str, Any]:
+) -> IndexAnalysisResult:
     """Analyze a list of SQL queries and recommend optimal indexes."""
     if len(queries) == 0:
         raise ValueError("Please provide a non-empty list of queries to analyze.")
@@ -433,7 +482,7 @@ async def analyze_query_indexes(
     else:
         index_tuning = LLMOptimizerTool(sql_driver)
     dta_tool = TextPresentation(sql_driver, index_tuning)
-    return await dta_tool.analyze_queries(queries=queries, max_index_size_mb=max_index_size_mb)
+    return cast(IndexAnalysisResult, await dta_tool.analyze_queries(queries=queries, max_index_size_mb=max_index_size_mb))
 
 
 @mcp.tool(
@@ -483,7 +532,7 @@ async def get_top_queries(
         default="resources",
     ),
     limit: int = Field(description="Number of queries to return when ranking based on mean_time or total_time", default=10),
-) -> dict[str, Any]:
+) -> TopQueriesResult:
     sql_driver = await get_sql_driver()
     top_queries_tool = TopQueriesCalc(sql_driver=sql_driver)
 
