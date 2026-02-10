@@ -112,16 +112,14 @@ def mock_extension_not_installed():
 @pytest.mark.asyncio
 async def test_top_queries_pg12_total_sort(mock_pg12_driver, mock_extension_installed):
     """Test top queries calculation on PostgreSQL 12 sorted by total execution time."""
-    # Create the TopQueriesCalc instance with the mock driver
     calc = TopQueriesCalc(sql_driver=mock_pg12_driver)
 
-    # Get top queries sorted by total time
     result = await calc.get_top_queries_by_time(limit=3, sort_by="total")
 
-    # Check that the result contains the expected information
-    assert "Top 3 slowest queries by total execution time" in result
-    # First query should be the one with highest total_time
-    assert "SELECT * FROM users" in result
+    # Result is now a list of dicts
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert result[0]["query"] == "SELECT * FROM users"
     # Verify the query used the correct column name for PG 12
     assert "total_time" in str(mock_pg12_driver.execute_query.call_args)
     assert "ORDER BY total_time DESC" in str(mock_pg12_driver.execute_query.call_args)
@@ -130,16 +128,12 @@ async def test_top_queries_pg12_total_sort(mock_pg12_driver, mock_extension_inst
 @pytest.mark.asyncio
 async def test_top_queries_pg12_mean_sort(mock_pg12_driver, mock_extension_installed):
     """Test top queries calculation on PostgreSQL 12 sorted by mean execution time."""
-    # Create the TopQueriesCalc instance with the mock driver
     calc = TopQueriesCalc(sql_driver=mock_pg12_driver)
 
-    # Get top queries sorted by mean time
     result = await calc.get_top_queries_by_time(limit=3, sort_by="mean")
 
-    # Check that the result contains the expected information
-    assert "Top 3 slowest queries by mean execution time per call" in result
-    # First query should be the one with highest mean_time
-    assert "SELECT * FROM orders" in result
+    assert isinstance(result, list)
+    assert len(result) == 3
     # Verify the query used the correct column name for PG 12
     assert "mean_time" in str(mock_pg12_driver.execute_query.call_args)
     assert "ORDER BY mean_time DESC" in str(mock_pg12_driver.execute_query.call_args)
@@ -148,16 +142,13 @@ async def test_top_queries_pg12_mean_sort(mock_pg12_driver, mock_extension_insta
 @pytest.mark.asyncio
 async def test_top_queries_pg13_total_sort(mock_pg13_driver, mock_extension_installed):
     """Test top queries calculation on PostgreSQL 13 sorted by total execution time."""
-    # Create the TopQueriesCalc instance with the mock driver
     calc = TopQueriesCalc(sql_driver=mock_pg13_driver)
 
-    # Get top queries sorted by total time
     result = await calc.get_top_queries_by_time(limit=3, sort_by="total")
 
-    # Check that the result contains the expected information
-    assert "Top 3 slowest queries by total execution time" in result
-    # First query should be the one with highest total_exec_time
-    assert "SELECT * FROM users" in result
+    assert isinstance(result, list)
+    assert len(result) == 3
+    assert result[0]["query"] == "SELECT * FROM users"
     # Verify the query used the correct column name for PG 13+
     assert "total_exec_time" in str(mock_pg13_driver.execute_query.call_args)
     assert "ORDER BY total_exec_time DESC" in str(mock_pg13_driver.execute_query.call_args)
@@ -166,16 +157,12 @@ async def test_top_queries_pg13_total_sort(mock_pg13_driver, mock_extension_inst
 @pytest.mark.asyncio
 async def test_top_queries_pg13_mean_sort(mock_pg13_driver, mock_extension_installed):
     """Test top queries calculation on PostgreSQL 13 sorted by mean execution time."""
-    # Create the TopQueriesCalc instance with the mock driver
     calc = TopQueriesCalc(sql_driver=mock_pg13_driver)
 
-    # Get top queries sorted by mean time
     result = await calc.get_top_queries_by_time(limit=3, sort_by="mean")
 
-    # Check that the result contains the expected information
-    assert "Top 3 slowest queries by mean execution time per call" in result
-    # First query should be the one with highest mean_exec_time
-    assert "SELECT * FROM orders" in result
+    assert isinstance(result, list)
+    assert len(result) == 3
     # Verify the query used the correct column name for PG 13+
     assert "mean_exec_time" in str(mock_pg13_driver.execute_query.call_args)
     assert "ORDER BY mean_exec_time DESC" in str(mock_pg13_driver.execute_query.call_args)
@@ -184,15 +171,10 @@ async def test_top_queries_pg13_mean_sort(mock_pg13_driver, mock_extension_insta
 @pytest.mark.asyncio
 async def test_extension_not_installed(mock_pg13_driver, mock_extension_not_installed):
     """Test behavior when pg_stat_statements extension is not installed."""
-    # Create the TopQueriesCalc instance with the mock driver
     calc = TopQueriesCalc(sql_driver=mock_pg13_driver)
 
-    # Try to get top queries when extension is not installed
-    result = await calc.get_top_queries_by_time(limit=3)
-
-    # Check that the result contains the installation instructions
-    assert "extension is required to report" in result
-    assert "CREATE EXTENSION" in result
+    with pytest.raises(ValueError, match="extension is required to report"):
+        await calc.get_top_queries_by_time(limit=3)
 
     # Verify that execute_query was not called (since extension is not installed)
     mock_pg13_driver.execute_query.assert_not_called()
@@ -204,23 +186,18 @@ async def test_error_handling(mock_pg13_driver, mock_extension_installed):
     # Configure execute_query to raise an exception
     mock_pg13_driver.execute_query.side_effect = Exception("Database error")
 
-    # Create the TopQueriesCalc instance with the mock driver
     calc = TopQueriesCalc(sql_driver=mock_pg13_driver)
 
-    # Try to get top queries
-    result = await calc.get_top_queries_by_time(limit=3)
-
-    # Check that the error is properly reported
-    assert "Error getting slow queries: Database error" in result
+    # Exceptions now propagate instead of being caught
+    with pytest.raises(Exception, match="Database error"):
+        await calc.get_top_queries_by_time(limit=3)
 
 
 @pytest.mark.asyncio
 async def test_resource_queries_pg12(mock_pg12_driver, mock_extension_installed):
     """Test resource queries on PostgreSQL 12 uses correct column names (stddev_time, no wal_bytes)."""
-    # Create the TopQueriesCalc instance with the mock driver
     calc = TopQueriesCalc(sql_driver=mock_pg12_driver)
 
-    # Get resource queries
     _result = await calc.get_top_resource_queries(frac_threshold=0.05)
 
     # Get the executed query from the mock
@@ -237,10 +214,8 @@ async def test_resource_queries_pg12(mock_pg12_driver, mock_extension_installed)
 @pytest.mark.asyncio
 async def test_resource_queries_pg13(mock_pg13_driver, mock_extension_installed):
     """Test resource queries on PostgreSQL 13 uses correct column names (stddev_exec_time, wal_bytes)."""
-    # Create the TopQueriesCalc instance with the mock driver
     calc = TopQueriesCalc(sql_driver=mock_pg13_driver)
 
-    # Get resource queries
     _result = await calc.get_top_resource_queries(frac_threshold=0.05)
 
     # Get the executed query from the mock

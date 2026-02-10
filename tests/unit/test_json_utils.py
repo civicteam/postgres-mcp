@@ -5,11 +5,10 @@ import json
 import uuid
 from decimal import Decimal
 
-import mcp.types as types
 import pytest
 
 from postgres_mcp.json_utils import to_json
-from postgres_mcp.server import format_text_response
+from postgres_mcp.json_utils import to_jsonable
 
 
 class TestToJson:
@@ -125,41 +124,49 @@ class TestToJson:
         assert result == []
 
 
-class TestFormatTextResponse:
-    """Tests for the format_text_response function."""
+class TestToJsonable:
+    """Tests for the to_jsonable conversion function."""
 
-    def test_string_passthrough(self):
-        """Test that string input is passed through as-is."""
-        result = format_text_response("hello world")
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        assert result[0].text == "hello world"
+    def test_basic_types_passthrough(self):
+        """Test that basic JSON-native types pass through unchanged."""
+        result = to_jsonable({"str": "hello", "int": 42, "float": 3.14, "bool": True, "null": None})
+        assert result == {"str": "hello", "int": 42, "float": 3.14, "bool": True, "null": None}
 
-    def test_structured_data_produces_json(self):
-        """Test that structured data is serialized to valid JSON."""
-        data = [{"schema_name": "public", "schema_owner": "postgres"}]
-        result = format_text_response(data)
-        assert len(result) == 1
-        assert isinstance(result[0], types.TextContent)
-        parsed = json.loads(result[0].text)
-        assert parsed[0]["schema_name"] == "public"
+    def test_decimal_whole_number(self):
+        """Test Decimal with whole number converts to int."""
+        result = to_jsonable({"count": Decimal("42")})
+        assert result["count"] == 42
+        assert isinstance(result["count"], int)
 
-    def test_dict_produces_json(self):
-        """Test that a dict is serialized to valid JSON."""
-        data = {"name": "users", "type": "table"}
-        result = format_text_response(data)
-        assert isinstance(result[0], types.TextContent)
-        parsed = json.loads(result[0].text)
-        assert parsed["name"] == "users"
+    def test_decimal_fractional(self):
+        """Test Decimal with fractional value converts to float."""
+        result = to_jsonable({"price": Decimal("19.99")})
+        assert result["price"] == pytest.approx(19.99)
 
-    def test_empty_string(self):
-        """Test that empty string is passed through as-is."""
-        result = format_text_response("")
-        assert isinstance(result[0], types.TextContent)
-        assert result[0].text == ""
+    def test_timedelta(self):
+        """Test timedelta converts to string."""
+        td = datetime.timedelta(days=1, hours=2, minutes=30)
+        result = to_jsonable({"interval": td})
+        assert result["interval"] == "1 day, 2:30:00"
+
+    def test_bytes(self):
+        """Test bytes converts to hex string."""
+        result = to_jsonable({"data": b"\xde\xad\xbe\xef"})
+        assert result["data"] == "deadbeef"
+
+    def test_list_of_dicts(self):
+        """Test list of dicts with mixed types."""
+        rows = [
+            {"name": "users", "count": Decimal("1000")},
+            {"name": "orders", "count": Decimal("5000")},
+        ]
+        result = to_jsonable(rows)
+        assert isinstance(result, list)
+        assert result[0]["count"] == 1000
+        assert result[1]["count"] == 5000
 
     def test_simulated_sql_rows_with_mixed_types(self):
-        """Test format_text_response with data resembling real SQL query results."""
+        """Test to_jsonable with data resembling real SQL query results."""
         rows = [
             {
                 "query": "SELECT * FROM users WHERE id = $1",
@@ -178,11 +185,9 @@ class TestFormatTextResponse:
                 "last_call": datetime.datetime(2024, 8, 1, 15, 0, tzinfo=datetime.timezone.utc),
             },
         ]
-        result = format_text_response(rows)
-        assert isinstance(result[0], types.TextContent)
-        parsed = json.loads(result[0].text)
-        assert len(parsed) == 2
-        assert parsed[0]["calls"] == 1500
-        assert parsed[0]["total_exec_time"] == pytest.approx(4523.789)
-        assert parsed[1]["total_exec_time"] == 12000
-        assert isinstance(parsed[1]["total_exec_time"], int)
+        result = to_jsonable(rows)
+        assert len(result) == 2
+        assert result[0]["calls"] == 1500
+        assert result[0]["total_exec_time"] == pytest.approx(4523.789)
+        assert result[1]["total_exec_time"] == 12000
+        assert isinstance(result[1]["total_exec_time"], int)

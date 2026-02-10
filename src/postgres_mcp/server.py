@@ -7,11 +7,9 @@ import signal
 import sys
 from enum import Enum
 from typing import Any
-from typing import List
 from typing import Literal
 from typing import Union
 
-import mcp.types as types
 from mcp.server.fastmcp import FastMCP
 from mcp.types import ToolAnnotations
 from pydantic import Field
@@ -27,7 +25,7 @@ from .explain import ExplainPlanTool
 from .index.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
 from .index.llm_opt import LLMOptimizerTool
 from .index.presentation import TextPresentation
-from .json_utils import to_json
+from .json_utils import to_jsonable
 from .sql import DbConnPool
 from .sql import SafeSqlDriver
 from .sql import SqlDriver
@@ -41,8 +39,6 @@ mcp = FastMCP("postgres-mcp")
 # Constants
 PG_STAT_STATEMENTS = "pg_stat_statements"
 HYPOPG_EXTENSION = "hypopg"
-
-ResponseType = List[types.TextContent | types.ImageContent | types.EmbeddedResource]
 
 logger = logging.getLogger(__name__)
 
@@ -72,21 +68,6 @@ async def get_sql_driver() -> Union[SqlDriver, SafeSqlDriver]:
         return base_driver
 
 
-def format_text_response(text: Any) -> ResponseType:
-    """Format a text response.
-
-    Strings are passed through as-is. Structured data (lists, dicts, etc.)
-    is serialized to JSON for reliable programmatic consumption.
-    """
-    if isinstance(text, str):
-        return [types.TextContent(type="text", text=text)]
-    return [types.TextContent(type="text", text=to_json(text))]
-
-
-def format_error_response(error: str) -> ResponseType:
-    """Format an error response."""
-    return format_text_response(f"Error: {error}")
-
 
 @mcp.tool(
     description="List all schemas in the database",
@@ -95,29 +76,25 @@ def format_error_response(error: str) -> ResponseType:
         readOnlyHint=True,
     ),
 )
-async def list_schemas() -> ResponseType:
+async def list_schemas() -> dict[str, Any]:
     """List all schemas in the database."""
-    try:
-        sql_driver = await get_sql_driver()
-        rows = await sql_driver.execute_query(
-            """
-            SELECT
-                schema_name,
-                schema_owner,
-                CASE
-                    WHEN schema_name LIKE 'pg_%' THEN 'System Schema'
-                    WHEN schema_name = 'information_schema' THEN 'System Information Schema'
-                    ELSE 'User Schema'
-                END as schema_type
-            FROM information_schema.schemata
-            ORDER BY schema_type, schema_name
-            """
-        )
-        schemas = [row.cells for row in rows] if rows else []
-        return format_text_response(schemas)
-    except Exception as e:
-        logger.error(f"Error listing schemas: {e}")
-        return format_error_response(str(e))
+    sql_driver = await get_sql_driver()
+    rows = await sql_driver.execute_query(
+        """
+        SELECT
+            schema_name,
+            schema_owner,
+            CASE
+                WHEN schema_name LIKE 'pg_%' THEN 'System Schema'
+                WHEN schema_name = 'information_schema' THEN 'System Information Schema'
+                ELSE 'User Schema'
+            END as schema_type
+        FROM information_schema.schemata
+        ORDER BY schema_type, schema_name
+        """
+    )
+    schemas = [row.cells for row in rows] if rows else []
+    return {"schemas": to_jsonable(schemas)}
 
 
 @mcp.tool(
@@ -130,68 +107,64 @@ async def list_schemas() -> ResponseType:
 async def list_objects(
     schema_name: str = Field(description="Schema name"),
     object_type: str = Field(description="Object type: 'table', 'view', 'sequence', or 'extension'", default="table"),
-) -> ResponseType:
+) -> dict[str, Any]:
     """List objects of a given type in a schema."""
-    try:
-        sql_driver = await get_sql_driver()
+    sql_driver = await get_sql_driver()
 
-        if object_type in ("table", "view"):
-            table_type = "BASE TABLE" if object_type == "table" else "VIEW"
-            rows = await SafeSqlDriver.execute_param_query(
-                sql_driver,
-                """
-                SELECT table_schema, table_name, table_type
-                FROM information_schema.tables
-                WHERE table_schema = {} AND table_type = {}
-                ORDER BY table_name
-                """,
-                [schema_name, table_type],
-            )
-            objects = (
-                [{"schema": row.cells["table_schema"], "name": row.cells["table_name"], "type": row.cells["table_type"]} for row in rows]
-                if rows
-                else []
-            )
+    if object_type in ("table", "view"):
+        table_type = "BASE TABLE" if object_type == "table" else "VIEW"
+        rows = await SafeSqlDriver.execute_param_query(
+            sql_driver,
+            """
+            SELECT table_schema, table_name, table_type
+            FROM information_schema.tables
+            WHERE table_schema = {} AND table_type = {}
+            ORDER BY table_name
+            """,
+            [schema_name, table_type],
+        )
+        objects = (
+            [{"schema": row.cells["table_schema"], "name": row.cells["table_name"], "type": row.cells["table_type"]} for row in rows]
+            if rows
+            else []
+        )
 
-        elif object_type == "sequence":
-            rows = await SafeSqlDriver.execute_param_query(
-                sql_driver,
-                """
-                SELECT sequence_schema, sequence_name, data_type
-                FROM information_schema.sequences
-                WHERE sequence_schema = {}
-                ORDER BY sequence_name
-                """,
-                [schema_name],
-            )
-            objects = (
-                [{"schema": row.cells["sequence_schema"], "name": row.cells["sequence_name"], "data_type": row.cells["data_type"]} for row in rows]
-                if rows
-                else []
-            )
+    elif object_type == "sequence":
+        rows = await SafeSqlDriver.execute_param_query(
+            sql_driver,
+            """
+            SELECT sequence_schema, sequence_name, data_type
+            FROM information_schema.sequences
+            WHERE sequence_schema = {}
+            ORDER BY sequence_name
+            """,
+            [schema_name],
+        )
+        objects = (
+            [{"schema": row.cells["sequence_schema"], "name": row.cells["sequence_name"], "data_type": row.cells["data_type"]} for row in rows]
+            if rows
+            else []
+        )
 
-        elif object_type == "extension":
-            # Extensions are not schema-specific
-            rows = await sql_driver.execute_query(
-                """
-                SELECT extname, extversion, extrelocatable
-                FROM pg_extension
-                ORDER BY extname
-                """
-            )
-            objects = (
-                [{"name": row.cells["extname"], "version": row.cells["extversion"], "relocatable": row.cells["extrelocatable"]} for row in rows]
-                if rows
-                else []
-            )
+    elif object_type == "extension":
+        # Extensions are not schema-specific
+        rows = await sql_driver.execute_query(
+            """
+            SELECT extname, extversion, extrelocatable
+            FROM pg_extension
+            ORDER BY extname
+            """
+        )
+        objects = (
+            [{"name": row.cells["extname"], "version": row.cells["extversion"], "relocatable": row.cells["extrelocatable"]} for row in rows]
+            if rows
+            else []
+        )
 
-        else:
-            return format_error_response(f"Unsupported object type: {object_type}")
+    else:
+        raise ValueError(f"Unsupported object type: {object_type}")
 
-        return format_text_response(objects)
-    except Exception as e:
-        logger.error(f"Error listing objects: {e}")
-        return format_error_response(str(e))
+    return {"objects": to_jsonable(objects)}
 
 
 @mcp.tool(
@@ -205,132 +178,128 @@ async def get_object_details(
     schema_name: str = Field(description="Schema name"),
     object_name: str = Field(description="Object name"),
     object_type: str = Field(description="Object type: 'table', 'view', 'sequence', or 'extension'", default="table"),
-) -> ResponseType:
+) -> dict[str, Any]:
     """Get detailed information about a database object."""
-    try:
-        sql_driver = await get_sql_driver()
+    sql_driver = await get_sql_driver()
 
-        if object_type in ("table", "view"):
-            # Get columns
-            col_rows = await SafeSqlDriver.execute_param_query(
-                sql_driver,
-                """
-                SELECT column_name, data_type, is_nullable, column_default
-                FROM information_schema.columns
-                WHERE table_schema = {} AND table_name = {}
-                ORDER BY ordinal_position
-                """,
-                [schema_name, object_name],
-            )
-            columns = (
-                [
-                    {
-                        "column": r.cells["column_name"],
-                        "data_type": r.cells["data_type"],
-                        "is_nullable": r.cells["is_nullable"],
-                        "default": r.cells["column_default"],
-                    }
-                    for r in col_rows
-                ]
-                if col_rows
-                else []
-            )
-
-            # Get constraints
-            con_rows = await SafeSqlDriver.execute_param_query(
-                sql_driver,
-                """
-                SELECT tc.constraint_name, tc.constraint_type, kcu.column_name
-                FROM information_schema.table_constraints AS tc
-                LEFT JOIN information_schema.key_column_usage AS kcu
-                  ON tc.constraint_name = kcu.constraint_name
-                 AND tc.table_schema = kcu.table_schema
-                WHERE tc.table_schema = {} AND tc.table_name = {}
-                """,
-                [schema_name, object_name],
-            )
-
-            constraints = {}
-            if con_rows:
-                for row in con_rows:
-                    cname = row.cells["constraint_name"]
-                    ctype = row.cells["constraint_type"]
-                    col = row.cells["column_name"]
-
-                    if cname not in constraints:
-                        constraints[cname] = {"type": ctype, "columns": []}
-                    if col:
-                        constraints[cname]["columns"].append(col)
-
-            constraints_list = [{"name": name, **data} for name, data in constraints.items()]
-
-            # Get indexes
-            idx_rows = await SafeSqlDriver.execute_param_query(
-                sql_driver,
-                """
-                SELECT indexname, indexdef
-                FROM pg_indexes
-                WHERE schemaname = {} AND tablename = {}
-                """,
-                [schema_name, object_name],
-            )
-
-            indexes = [{"name": r.cells["indexname"], "definition": r.cells["indexdef"]} for r in idx_rows] if idx_rows else []
-
-            result = {
-                "basic": {"schema": schema_name, "name": object_name, "type": object_type},
-                "columns": columns,
-                "constraints": constraints_list,
-                "indexes": indexes,
-            }
-
-        elif object_type == "sequence":
-            rows = await SafeSqlDriver.execute_param_query(
-                sql_driver,
-                """
-                SELECT sequence_schema, sequence_name, data_type, start_value, increment
-                FROM information_schema.sequences
-                WHERE sequence_schema = {} AND sequence_name = {}
-                """,
-                [schema_name, object_name],
-            )
-
-            if rows and rows[0]:
-                row = rows[0]
-                result = {
-                    "schema": row.cells["sequence_schema"],
-                    "name": row.cells["sequence_name"],
-                    "data_type": row.cells["data_type"],
-                    "start_value": row.cells["start_value"],
-                    "increment": row.cells["increment"],
+    if object_type in ("table", "view"):
+        # Get columns
+        col_rows = await SafeSqlDriver.execute_param_query(
+            sql_driver,
+            """
+            SELECT column_name, data_type, is_nullable, column_default
+            FROM information_schema.columns
+            WHERE table_schema = {} AND table_name = {}
+            ORDER BY ordinal_position
+            """,
+            [schema_name, object_name],
+        )
+        columns = (
+            [
+                {
+                    "column": r.cells["column_name"],
+                    "data_type": r.cells["data_type"],
+                    "is_nullable": r.cells["is_nullable"],
+                    "default": r.cells["column_default"],
                 }
-            else:
-                result = {}
+                for r in col_rows
+            ]
+            if col_rows
+            else []
+        )
 
-        elif object_type == "extension":
-            rows = await SafeSqlDriver.execute_param_query(
-                sql_driver,
-                """
-                SELECT extname, extversion, extrelocatable
-                FROM pg_extension
-                WHERE extname = {}
-                """,
-                [object_name],
-            )
+        # Get constraints
+        con_rows = await SafeSqlDriver.execute_param_query(
+            sql_driver,
+            """
+            SELECT tc.constraint_name, tc.constraint_type, kcu.column_name
+            FROM information_schema.table_constraints AS tc
+            LEFT JOIN information_schema.key_column_usage AS kcu
+              ON tc.constraint_name = kcu.constraint_name
+             AND tc.table_schema = kcu.table_schema
+            WHERE tc.table_schema = {} AND tc.table_name = {}
+            """,
+            [schema_name, object_name],
+        )
 
-            if rows and rows[0]:
-                row = rows[0]
-                result = {"name": row.cells["extname"], "version": row.cells["extversion"], "relocatable": row.cells["extrelocatable"]}
-            else:
-                result = {}
+        constraints: dict[str, Any] = {}
+        if con_rows:
+            for row in con_rows:
+                cname = row.cells["constraint_name"]
+                ctype = row.cells["constraint_type"]
+                col = row.cells["column_name"]
 
+                if cname not in constraints:
+                    constraints[cname] = {"type": ctype, "columns": []}
+                if col:
+                    constraints[cname]["columns"].append(col)
+
+        constraints_list = [{"name": name, **data} for name, data in constraints.items()]
+
+        # Get indexes
+        idx_rows = await SafeSqlDriver.execute_param_query(
+            sql_driver,
+            """
+            SELECT indexname, indexdef
+            FROM pg_indexes
+            WHERE schemaname = {} AND tablename = {}
+            """,
+            [schema_name, object_name],
+        )
+
+        indexes = [{"name": r.cells["indexname"], "definition": r.cells["indexdef"]} for r in idx_rows] if idx_rows else []
+
+        result = {
+            "basic": {"schema": schema_name, "name": object_name, "type": object_type},
+            "columns": columns,
+            "constraints": constraints_list,
+            "indexes": indexes,
+        }
+
+    elif object_type == "sequence":
+        rows = await SafeSqlDriver.execute_param_query(
+            sql_driver,
+            """
+            SELECT sequence_schema, sequence_name, data_type, start_value, increment
+            FROM information_schema.sequences
+            WHERE sequence_schema = {} AND sequence_name = {}
+            """,
+            [schema_name, object_name],
+        )
+
+        if rows and rows[0]:
+            row = rows[0]
+            result = {
+                "schema": row.cells["sequence_schema"],
+                "name": row.cells["sequence_name"],
+                "data_type": row.cells["data_type"],
+                "start_value": row.cells["start_value"],
+                "increment": row.cells["increment"],
+            }
         else:
-            return format_error_response(f"Unsupported object type: {object_type}")
+            result = {}
 
-        return format_text_response(result)
-    except Exception as e:
-        logger.error(f"Error getting object details: {e}")
-        return format_error_response(str(e))
+    elif object_type == "extension":
+        rows = await SafeSqlDriver.execute_param_query(
+            sql_driver,
+            """
+            SELECT extname, extversion, extrelocatable
+            FROM pg_extension
+            WHERE extname = {}
+            """,
+            [object_name],
+        )
+
+        if rows and rows[0]:
+            row = rows[0]
+            result = {"name": row.cells["extname"], "version": row.cells["extversion"], "relocatable": row.cells["extrelocatable"]}
+        else:
+            result = {}
+
+    else:
+        raise ValueError(f"Unsupported object type: {object_type}")
+
+    return to_jsonable(result)
 
 
 @mcp.tool(
@@ -360,7 +329,7 @@ Examples: [
 If there is no hypothetical index, you can pass an empty list.""",
         default=[],
     ),
-) -> ResponseType:
+) -> str:
     """
     Explains the execution plan for a SQL query.
 
@@ -369,69 +338,52 @@ If there is no hypothetical index, you can pass an empty list.""",
         analyze: When True, actually runs the query for real statistics
         hypothetical_indexes: Optional list of indexes to simulate
     """
-    try:
-        sql_driver = await get_sql_driver()
-        explain_tool = ExplainPlanTool(sql_driver=sql_driver)
-        result: ExplainPlanArtifact | ErrorResult | None = None
+    sql_driver = await get_sql_driver()
+    explain_tool = ExplainPlanTool(sql_driver=sql_driver)
+    result: ExplainPlanArtifact | ErrorResult | None = None
 
-        # If hypothetical indexes are specified, check for HypoPG extension
-        if hypothetical_indexes and len(hypothetical_indexes) > 0:
-            if analyze:
-                return format_error_response("Cannot use analyze and hypothetical indexes together")
-            try:
-                # Use the common utility function to check if hypopg is installed
-                (
-                    is_hypopg_installed,
-                    hypopg_message,
-                ) = await check_hypopg_installation_status(sql_driver)
+    # If hypothetical indexes are specified, check for HypoPG extension
+    if hypothetical_indexes and len(hypothetical_indexes) > 0:
+        if analyze:
+            raise ValueError("Cannot use analyze and hypothetical indexes together")
 
-                # If hypopg is not installed, return the message
-                if not is_hypopg_installed:
-                    return format_text_response(hypopg_message)
+        # Use the common utility function to check if hypopg is installed
+        (
+            is_hypopg_installed,
+            hypopg_message,
+        ) = await check_hypopg_installation_status(sql_driver)
 
-                # HypoPG is installed, proceed with explaining with hypothetical indexes
-                result = await explain_tool.explain_with_hypothetical_indexes(sql, hypothetical_indexes)
-            except Exception:
-                raise  # Re-raise the original exception
-        elif analyze:
-            try:
-                # Use EXPLAIN ANALYZE
-                result = await explain_tool.explain_analyze(sql)
-            except Exception:
-                raise  # Re-raise the original exception
-        else:
-            try:
-                # Use basic EXPLAIN
-                result = await explain_tool.explain(sql)
-            except Exception:
-                raise  # Re-raise the original exception
+        # If hypopg is not installed, return the message
+        if not is_hypopg_installed:
+            return hypopg_message
 
-        if result and isinstance(result, ExplainPlanArtifact):
-            return format_text_response(result.to_text())
-        else:
-            error_message = "Error processing explain plan"
-            if isinstance(result, ErrorResult):
-                error_message = result.to_text()
-            return format_error_response(error_message)
-    except Exception as e:
-        logger.error(f"Error explaining query: {e}")
-        return format_error_response(str(e))
+        # HypoPG is installed, proceed with explaining with hypothetical indexes
+        result = await explain_tool.explain_with_hypothetical_indexes(sql, hypothetical_indexes)
+    elif analyze:
+        result = await explain_tool.explain_analyze(sql)
+    else:
+        result = await explain_tool.explain(sql)
+
+    if result and isinstance(result, ExplainPlanArtifact):
+        return result.to_text()
+
+    error_message = "Error processing explain plan"
+    if isinstance(result, ErrorResult):
+        error_message = result.to_text()
+    raise RuntimeError(error_message)
 
 
 # Query function declaration without the decorator - we'll add it dynamically based on access mode
 async def execute_sql(
     sql: str = Field(description="SQL to run", default="all"),
-) -> ResponseType:
+) -> dict[str, Any]:
     """Executes a SQL query against the database."""
-    try:
-        sql_driver = await get_sql_driver()
-        rows = await sql_driver.execute_query(sql)  # type: ignore
-        if rows is None:
-            return format_text_response("No results")
-        return format_text_response(list([r.cells for r in rows]))
-    except Exception as e:
-        logger.error(f"Error executing query: {e}")
-        return format_error_response(str(e))
+    sql_driver = await get_sql_driver()
+    rows = await sql_driver.execute_query(sql)  # type: ignore
+    if rows is None:
+        return {"rows": [], "row_count": 0}
+    result_rows = [r.cells for r in rows]
+    return {"rows": to_jsonable(result_rows), "row_count": len(result_rows)}
 
 
 @mcp.tool(
@@ -445,20 +397,15 @@ async def execute_sql(
 async def analyze_workload_indexes(
     max_index_size_mb: int = Field(description="Max index size in MB", default=10000),
     method: Literal["dta", "llm"] = Field(description="Method to use for analysis", default="dta"),
-) -> ResponseType:
+) -> dict[str, Any]:
     """Analyze frequently executed queries in the database and recommend optimal indexes."""
-    try:
-        sql_driver = await get_sql_driver()
-        if method == "dta":
-            index_tuning = DatabaseTuningAdvisor(sql_driver)
-        else:
-            index_tuning = LLMOptimizerTool(sql_driver)
-        dta_tool = TextPresentation(sql_driver, index_tuning)
-        result = await dta_tool.analyze_workload(max_index_size_mb=max_index_size_mb)
-        return format_text_response(result)
-    except Exception as e:
-        logger.error(f"Error analyzing workload: {e}")
-        return format_error_response(str(e))
+    sql_driver = await get_sql_driver()
+    if method == "dta":
+        index_tuning = DatabaseTuningAdvisor(sql_driver)
+    else:
+        index_tuning = LLMOptimizerTool(sql_driver)
+    dta_tool = TextPresentation(sql_driver, index_tuning)
+    return await dta_tool.analyze_workload(max_index_size_mb=max_index_size_mb)
 
 
 @mcp.tool(
@@ -473,25 +420,20 @@ async def analyze_query_indexes(
     queries: list[str] = Field(description="List of Query strings to analyze"),
     max_index_size_mb: int = Field(description="Max index size in MB", default=10000),
     method: Literal["dta", "llm"] = Field(description="Method to use for analysis", default="dta"),
-) -> ResponseType:
+) -> dict[str, Any]:
     """Analyze a list of SQL queries and recommend optimal indexes."""
     if len(queries) == 0:
-        return format_error_response("Please provide a non-empty list of queries to analyze.")
+        raise ValueError("Please provide a non-empty list of queries to analyze.")
     if len(queries) > MAX_NUM_INDEX_TUNING_QUERIES:
-        return format_error_response(f"Please provide a list of up to {MAX_NUM_INDEX_TUNING_QUERIES} queries to analyze.")
+        raise ValueError(f"Please provide a list of up to {MAX_NUM_INDEX_TUNING_QUERIES} queries to analyze.")
 
-    try:
-        sql_driver = await get_sql_driver()
-        if method == "dta":
-            index_tuning = DatabaseTuningAdvisor(sql_driver)
-        else:
-            index_tuning = LLMOptimizerTool(sql_driver)
-        dta_tool = TextPresentation(sql_driver, index_tuning)
-        result = await dta_tool.analyze_queries(queries=queries, max_index_size_mb=max_index_size_mb)
-        return format_text_response(result)
-    except Exception as e:
-        logger.error(f"Error analyzing queries: {e}")
-        return format_error_response(str(e))
+    sql_driver = await get_sql_driver()
+    if method == "dta":
+        index_tuning = DatabaseTuningAdvisor(sql_driver)
+    else:
+        index_tuning = LLMOptimizerTool(sql_driver)
+    dta_tool = TextPresentation(sql_driver, index_tuning)
+    return await dta_tool.analyze_queries(queries=queries, max_index_size_mb=max_index_size_mb)
 
 
 @mcp.tool(
@@ -515,7 +457,7 @@ async def analyze_db_health(
         description=f"Optional. Valid values are: {', '.join(sorted([t.value for t in HealthType]))}.",
         default="all",
     ),
-) -> ResponseType:
+) -> str:
     """Analyze database health for specified components.
 
     Args:
@@ -523,8 +465,7 @@ async def analyze_db_health(
                     Valid values: index, connection, vacuum, sequence, replication, buffer, constraint, all
     """
     health_tool = DatabaseHealthTool(await get_sql_driver())
-    result = await health_tool.health(health_type=health_type)
-    return format_text_response(result)
+    return await health_tool.health(health_type=health_type)
 
 
 @mcp.tool(
@@ -542,23 +483,20 @@ async def get_top_queries(
         default="resources",
     ),
     limit: int = Field(description="Number of queries to return when ranking based on mean_time or total_time", default=10),
-) -> ResponseType:
-    try:
-        sql_driver = await get_sql_driver()
-        top_queries_tool = TopQueriesCalc(sql_driver=sql_driver)
+) -> dict[str, Any]:
+    sql_driver = await get_sql_driver()
+    top_queries_tool = TopQueriesCalc(sql_driver=sql_driver)
 
-        if sort_by == "resources":
-            result = await top_queries_tool.get_top_resource_queries()
-            return format_text_response(result)
-        elif sort_by == "mean_time" or sort_by == "total_time":
-            # Map the sort_by values to what get_top_queries_by_time expects
-            result = await top_queries_tool.get_top_queries_by_time(limit=limit, sort_by="mean" if sort_by == "mean_time" else "total")
-        else:
-            return format_error_response("Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'.")
-        return format_text_response(result)
-    except Exception as e:
-        logger.error(f"Error getting slow queries: {e}")
-        return format_error_response(str(e))
+    if sort_by == "resources":
+        queries = await top_queries_tool.get_top_resource_queries()
+    elif sort_by in ("mean_time", "total_time"):
+        queries = await top_queries_tool.get_top_queries_by_time(
+            limit=limit, sort_by="mean" if sort_by == "mean_time" else "total"
+        )
+    else:
+        raise ValueError("Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'.")
+
+    return {"queries": to_jsonable(queries), "sort_by": sort_by, "count": len(queries)}
 
 
 async def main():
