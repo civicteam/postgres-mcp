@@ -117,7 +117,6 @@ async def get_sql_driver() -> Union[SqlDriver, SafeSqlDriver]:
         return base_driver
 
 
-
 @mcp.tool(
     description="List all schemas in the database",
     annotations=ToolAnnotations(
@@ -173,9 +172,7 @@ async def list_objects(
             [schema_name, table_type],
         )
         objects = (
-            [{"schema": row.cells["table_schema"], "name": row.cells["table_name"], "type": row.cells["table_type"]} for row in rows]
-            if rows
-            else []
+            [{"schema": row.cells["table_schema"], "name": row.cells["table_name"], "type": row.cells["table_type"]} for row in rows] if rows else []
         )
 
     elif object_type == "sequence":
@@ -539,9 +536,7 @@ async def get_top_queries(
     if sort_by == "resources":
         queries = await top_queries_tool.get_top_resource_queries()
     elif sort_by in ("mean_time", "total_time"):
-        queries = await top_queries_tool.get_top_queries_by_time(
-            limit=limit, sort_by="mean" if sort_by == "mean_time" else "total"
-        )
+        queries = await top_queries_tool.get_top_queries_by_time(limit=limit, sort_by="mean" if sort_by == "mean_time" else "total")
     else:
         raise ValueError("Invalid sort criteria. Please use 'resources' or 'mean_time' or 'total_time'.")
 
