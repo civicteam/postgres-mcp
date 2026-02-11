@@ -1,4 +1,3 @@
-import json
 import logging
 
 import pytest
@@ -128,17 +127,11 @@ async def test_get_top_queries_integration(local_sql_driver):
         # Get top queries by mean execution time
         mean_result = await calc.get_top_queries_by_time(limit=10, sort_by="mean")
 
-        # Basic verification
-        assert "slowest queries by total execution time" in total_result
-        assert "slowest queries by mean execution time" in mean_result
-
-        # Verify the JSON portion is valid and has expected structure
+        # Results are now lists of dicts
         for result in [total_result, mean_result]:
-            json_start = result.index("\n") + 1
-            parsed = json.loads(result[json_start:])
-            assert isinstance(parsed, list)
-            assert len(parsed) > 0
-            first_row = parsed[0]
+            assert isinstance(result, list)
+            assert len(result) > 0
+            first_row = result[0]
             assert "query" in first_row
             assert "calls" in first_row
             assert "rows" in first_row
@@ -149,10 +142,10 @@ async def test_get_top_queries_integration(local_sql_driver):
         logger.info(f"Top queries by mean time: {mean_result}")
 
         # Check for our specific test queries - at least one should be found
-        # since we run many different queries
-        has_cross_join = "CROSS JOIN" in total_result
-        has_value_gt_500 = "value > 500" in total_result
-        has_count = "COUNT(*)" in total_result
+        all_queries = " ".join(row["query"] for row in total_result)
+        has_cross_join = "CROSS JOIN" in all_queries
+        has_value_gt_500 = "value > 500" in all_queries
+        has_count = "COUNT(*)" in all_queries
 
         assert has_cross_join or has_value_gt_500 or has_count, "None of our test queries appeared in the results"
 
@@ -169,12 +162,11 @@ async def test_get_resource_queries_returns_valid_json(local_sql_driver):
         calc = TopQueriesCalc(sql_driver=local_sql_driver)
         result = await calc.get_top_resource_queries(frac_threshold=0.01)
 
-        # Result should be valid JSON
-        parsed = json.loads(result)
-        assert isinstance(parsed, list)
+        # Result is now a list of dicts
+        assert isinstance(result, list)
 
-        if len(parsed) > 0:
-            first_row = parsed[0]
+        if len(result) > 0:
+            first_row = result[0]
             assert "query" in first_row
             assert "calls" in first_row
             assert "total_exec_time" in first_row
@@ -215,9 +207,6 @@ async def test_extension_not_available(local_sql_driver):
         # We need to patch the actual function imported by TopQueriesCalc
         mp.setattr(postgres_mcp.top_queries.top_queries_calc, "check_extension", mock_check)
 
-        # Run the test
-        result = await calc.get_top_queries_by_time()
-
-        # Check that we get installation instructions
-        assert "not currently installed" in result
-        assert "CREATE EXTENSION" in result
+        # Run the test - should raise ValueError with installation instructions
+        with pytest.raises(ValueError, match="not currently installed"):
+            await calc.get_top_queries_by_time()

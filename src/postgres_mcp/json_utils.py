@@ -32,6 +32,21 @@ def _default(obj: Any) -> Any:
     raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 
+def to_jsonable(obj: Any) -> Any:
+    """Convert obj to a JSON-serializable Python structure.
+
+    Round-trips through orjson to convert PostgreSQL types
+    (Decimal, timedelta, bytes, etc.) to JSON-native types.
+
+    Args:
+        obj: The Python object to convert.
+
+    Returns:
+        A structure containing only JSON-native Python types.
+    """
+    return orjson.loads(orjson.dumps(obj, default=_default))
+
+
 def to_json(obj: Any) -> str:
     """Serialize a Python object to a JSON string.
 
