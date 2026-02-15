@@ -13,6 +13,7 @@ from typing import Union
 from typing import cast
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from pydantic import validate_call
@@ -651,10 +652,14 @@ async def main():
     elif args.transport == "sse":
         mcp.settings.host = args.sse_host
         mcp.settings.port = args.sse_port
+        if args.sse_host not in ("127.0.0.1", "localhost", "::1"):
+            mcp.settings.transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
         await mcp.run_sse_async()
     elif args.transport == "streamable-http":
         mcp.settings.host = args.streamable_http_host
         mcp.settings.port = args.streamable_http_port
+        if args.streamable_http_host not in ("127.0.0.1", "localhost", "::1"):
+            mcp.settings.transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
         await mcp.run_streamable_http_async()
 
 
