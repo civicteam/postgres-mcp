@@ -22,7 +22,6 @@ ADD . /app
 RUN --mount=type=cache,target=/root/.cache/uv \
   uv sync --frozen --no-dev
 
-
 # pinned: python:3.12-slim-bookworm
 FROM python@sha256:73dbd1a2ad74137451593a8ac30f7bdd0f5010fc05fb34644190cffa7696bbf3
 # It is important to use the image that matches the builder, as the path to the

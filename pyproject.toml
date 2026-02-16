@@ -45,6 +45,12 @@ dev = [
     "ruff==0.14.13",
 ]
 
+# CVE-2025-69872: diskcache uses unsafe deserialization. It is a transitive dep
+# of instructor, which lazy-loads it only when DiskCache caching is explicitly
+# requested. Our code never uses it.
+[tool.uv]
+exclude-dependencies = ["diskcache"]
+
 [tool.black]
 line-length = 150
 
