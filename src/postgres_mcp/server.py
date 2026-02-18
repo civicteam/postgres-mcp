@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 from enum import Enum
+from typing import Annotated
 from typing import Any
 from typing import Literal
 from typing import TypedDict
@@ -14,6 +15,8 @@ from typing import cast
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.types import CallToolResult
+from mcp.types import TextContent
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from pydantic import validate_call
@@ -28,6 +31,7 @@ from .explain import ExplainPlanTool
 from .index.index_opt_base import MAX_NUM_INDEX_TUNING_QUERIES
 from .index.llm_opt import LLMOptimizerTool
 from .index.presentation import TextPresentation
+from .json_utils import to_json
 from .json_utils import to_jsonable
 from .sql import DbConnPool
 from .sql import SafeSqlDriver
@@ -225,7 +229,7 @@ async def get_object_details(
     schema_name: str = Field(description="Schema name"),
     object_name: str = Field(description="Object name"),
     object_type: str = Field(description="Object type: 'table', 'view', 'sequence', or 'extension'", default="table"),
-) -> ObjectDetailsResult:
+) -> Annotated[CallToolResult, ObjectDetailsResult]:
     """Get detailed information about a database object."""
     sql_driver = await get_sql_driver()
 
@@ -346,7 +350,11 @@ async def get_object_details(
     else:
         raise ValueError(f"Unsupported object type: {object_type}")
 
-    return to_jsonable(result)
+    structured = to_jsonable(result)
+    return CallToolResult(
+        content=[TextContent(type="text", text=to_json(structured))],
+        structuredContent=structured,
+    )
 
 
 @mcp.tool(
