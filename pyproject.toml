@@ -48,8 +48,12 @@ dev = [
 # CVE-2025-69872: diskcache uses unsafe deserialization. It is a transitive dep
 # of instructor, which lazy-loads it only when DiskCache caching is explicitly
 # requested. Our code never uses it.
+# CVE-2026-26007: cryptography <46.0.5 missing EC public key point validation.
+# Pulled in transitively via mcp -> pyjwt[crypto]. pyjwt only requires >=3.4.0
+# so we pin the minimum here to enforce the fix.
 [tool.uv]
 exclude-dependencies = ["diskcache"]
+constraint-dependencies = ["cryptography>=46.0.5"]
 
 [tool.black]
 line-length = 150
